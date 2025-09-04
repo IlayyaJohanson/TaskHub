@@ -1,70 +1,93 @@
-import enum
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
-from jose import jwt
-from modules import config, db
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
 from passlib.context import CryptContext
-from sqlalchemy import Column, DateTime, Enum, Integer, String
 from sqlalchemy.orm import Session
 
+from . import config
+from .db import get_db
+from .models import User
+from .schemas import Token, UserCreate, UserLogin, UserRead
+
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 
-# Роли пользователей
-class UserRole(str, enum.Enum):
-    admin = "admin"
-    manager = "manager"
-    user = "user"
+# --- helpers ---
 
 
-# Модель пользователя
-class User(db.Base):
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True)
-    email = Column(String, unique=True, index=True)
-    password_hash = Column(String)
-    role = Column(Enum(UserRole), default=UserRole.user)
-    created_at = Column(DateTime, default=datetime.utcnow)
+def hash_password(plain: str) -> str:
+    return pwd_context.hash(plain)
 
 
-# Хелперы
-def hash_password(password: str):
-    return pwd_context.hash(password)
+def verify_password(plain: str, hashed: str) -> bool:
+    return pwd_context.verify(plain, hashed)
 
 
-def verify_password(password: str, hashed: str):
-    return pwd_context.verify(password, hashed)
-
-
-def create_access_token(data: dict):
-    to_encode = data.copy()
+def create_access_token(sub: str) -> str:
     expire = datetime.utcnow() + timedelta(days=config.JWT_EXPIRE_DAYS)
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, config.JWT_SECRET, algorithm="HS256")
+    payload = {"sub": sub, "exp": expire}
+    return jwt.encode(payload, config.JWT_SECRET, algorithm=config.JWT_ALG)
 
 
-# Регистрация
-@router.post("/register")
-def register(
-    username: str, email: str, password: str, db_sess: Session = Depends(db.get_db)
-):
-    if db_sess.query(User).filter(User.email == email).first():
-        raise HTTPException(status_code=400, detail="Email already registered")
-    user = User(username=username, email=email, password_hash=hash_password(password))
-    db_sess.add(user)
-    db_sess.commit()
-    db_sess.refresh(user)
-    return {"id": user.id, "username": user.username}
+# --- routes ---
 
 
-# Логин
-@router.post("/login")
-def login(email: str, password: str, db_sess: Session = Depends(db.get_db)):
-    user = db_sess.query(User).filter(User.email == email).first()
-    if not user or not verify_password(password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    token = create_access_token({"sub": str(user.id)})
-    return {"access_token": token}
+@router.post("/register", response_model=UserRead, status_code=201)
+def register(user_in: UserCreate, db: Session = Depends(get_db)):
+    exists = (
+        db.query(User)
+        .filter((User.email == user_in.email) | (User.username == user_in.username))
+        .first()
+    )
+    if exists:
+        raise HTTPException(
+            status_code=400, detail="User with same email or username already exists"
+        )
+    user = User(
+        username=user_in.username,
+        email=user_in.email,
+        password_hash=hash_password(user_in.password),
+        created_at=datetime.utcnow(),
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.post("/login", response_model=Token)
+def login(data: UserLogin, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == data.email).first()
+    if not user or not verify_password(data.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+        )
+    token = create_access_token(str(user.id))
+    return Token(access_token=token)
+
+
+def get_current_user(
+    db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)
+) -> User:
+    try:
+        payload = jwt.decode(token, config.JWT_SECRET, algorithms=[config.JWT_ALG])
+        user_id = payload.get("sub")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    #    return {"status": "ok"}
+
+    user = db.query(User).get(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+@router.get("/me", response_model=UserRead)
+def get_me(current_user: User = Depends(get_current_user)):
+    return current_user

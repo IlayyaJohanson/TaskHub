@@ -76,6 +76,19 @@
 Параметры: email, password
 Ответ: { "access_token": "..." }
 
+[GET] /auth/me
+Описание: Получение информации о текущем пользователе
+Параметры: JWT токен
+Ответ:
+
+```json
+{
+  "id": 1,
+  "username": "john",
+  "email": "john@example.com",
+  "created_at": "2025-09-01T12:00:00Z"
+}
+
 [GET] /projects
 Описание: Список проектов пользователя
 Параметры: JWT токен
@@ -89,17 +102,20 @@
 | --------------- | --- | --------------------- | -------------------------- |
 | JWT_SECRET      | str | dev_secret_key        | Секрет для подписи токенов |
 | JWT_EXPIRE_DAYS | int | 7                     | Срок действия токена       |
+| JWT_ALG         | str | HS256                 | Алгоритм подписи JWT       |
 | DB_URL          | str | postgres://...        | Подключение к БД           |
 
 ---
 
 ## 6. Существующие классы и объекты
 
-**На старте:** пока нет реализованных классов, планируются:
-
-- `User`
-- `Project`
-- `Task`
+- modules/models.py
+  - User
+  - Project
+  - Task
+- modules/schemas.py (Pydantic-схемы)
+  - UserCreate, UserLogin, UserRead
+  - Token
 
 ---
 
@@ -135,6 +151,18 @@
 | frontend_web    | frontend/web/         | Веб-фронтенд на React + Tailwind CSS + React Query                   | Через API      |
 | frontend_mobile | frontend/mobile/      | Мобильное приложение на React Native + Tailwind for RN + React Query | Через API      |
 
+⚠️ На текущем этапе реализованы только базовые модули backend и минимальный веб-фронтенд:
+
+- main.py — точка входа FastAPI.
+- modules/config.py — глобальные настройки, загрузка .env.
+- modules/db.py — подключение к PostgreSQL и база SQLAlchemy.
+- modules/auth.py — регистрация, логин, JWT.
+- modules/models.py — модели (User, Project, Task, пока только базовый каркас).
+- modules/schemas.py — Pydantic-схемы (UserCreate, UserRead и др., пока только для auth).
+- alembic.ini и migrations/ — миграции БД.
+- requirements.txt — зависимости backend.
+- frontend/web/ — минимальный фронтенд на React (Vite).
+
 ---
 
 ## 10. Структура фронтенда
@@ -151,25 +179,26 @@
 
 **Структура директорий:**
 
+⚠️ На текущем этапе фронтенд-web представлен минимальным шаблоном Vite+React:
+
 frontend/web/
-│ package.json
-│ tailwind.config.js
-│ postcss.config.js
-│ vite.config.js
+│ package.json, package-lock.json, vite.config.js, index.html
+│ .gitignore, README.md, eslint.config.js
 │
-├─ public/ # Статические файлы
+├─ public/             # статические файлы (favicon, иконки и пр.)
 └─ src/
-├─ api/ # Логика API-запросов
-├─ components/ # Переиспользуемые UI-компоненты
-├─ pages/ # Страницы (роуты)
-├─ hooks/ # Кастомные React-хуки
-├─ store/ # Глобальное состояние (Redux Toolkit/Zustand)
-├─ App.jsx # Главный компонент приложения
-└─ main.jsx # Точка входа
+   │ App.jsx           # UI регистрации/логина, кнопка Who am I?
+   │ App.css           # кастомные стили
+   │ main.jsx          # точка входа React
+   │ index.css         # Tailwind base
+   │ api.js            # функции register/login/me через Axios
+   └─ assets/          # картинки/иконки
+
+Структура с pages/components/hooks пока не реализована, весь функционал в App.jsx.
 
 **Подключение к API:**
 
-- Все запросы выполняются через `src/api/` с использованием Axios и React Query.
+- Все запросы выполняются через src/api.js с использованием Axios (в дальнейшем планируется вынести в src/api/ и подключить React Query).
 - API-адрес хранится в `.env`.
 
 ---
@@ -225,6 +254,10 @@ frontend/mobile/
 - `tailwind.config.js` — конфигурация Tailwind
 - `src/main.jsx`, `src/App.jsx`, `src/index.css` — точка входа и базовая страница
 
+Стартовый шаблон дополнен файлами api.js (Axios-запросы), App.css (стили), vite.config.js, .gitignore, README.md, eslint.config.js.
+
+Подключение API реализовано через api.js, где определены функции register, login, me.
+
 ---
 
 ## 9. История изменений проекта
@@ -237,3 +270,12 @@ frontend/mobile/
 - **2025-08-28:** Настроен и установлен PostgreSQL, создан пользователь и БД `taskhub`.
   Backend успешно подключается к БД, таблицы создаются через SQLAlchemy.
   Файлы `main.py`, `config.py`, `db.py`, `auth.py` приведены в рабочее состояние, проект стартует через `uvicorn`.
+- **2025-09-03:** Вынесены модели User, Project, Task из auth.py в modules/models.py. Добавлен modules/schemas.py с Pydantic-схемами для регистрации, логина и чтения пользователей.  Интегрирован Alembic для управления миграциями: добавлены migrations/env.py и alembic.ini. Добавлена команда alembic revision --autogenerate для первичной схемы БД.
+- **2025-09-04:** Настроен CORS в backend/main.py под Vite-разработку (http://localhost:5173).
+Добавлены .env файлы в backend и frontend/web для конфигурации DB_URL, JWT_SECRET и VITE_API_URL. Модули config.py и dotenv подключают переменные окружения. Реализовано демо аутентификации на фронтенде:
+• frontend/web/src/api.js — регистрация, логин, получение /auth/me.
+• frontend/web/src/App.jsx — формы для register/login, хранение токена в localStorage, кнопка “Who am I?”.
+
+
+
+```
